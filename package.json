@@ -1,0 +1,31 @@
+{
+  "name": "stremio-torbox",
+  "version": "1.0.0",
+  "description": "Stremio addon for streaming via TorBox cached torrents and Usenet NZBs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "stremio",
+    "torbox",
+    "debrid",
+    "usenet",
+    "nzb",
+    "torrent",
+    "streaming",
+    "addon"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.20.0",
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "form-data": "^4.0.6",
+    "node-fetch": "^2.7.0",
+    "stremio-addon-sdk": "^1.6.10"
+  }
+}
