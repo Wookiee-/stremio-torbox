@@ -363,6 +363,22 @@ async function extto(query, type) {
   return results;
 }
 
+// ─── SolidTorrents (JSON API — redirects to bitsearch.eu backend) ─
+async function solidtorrents(query) {
+  const data = await httpGet('https://bitsearch.eu/api/v1/search', {
+    params: { q: query },
+    timeout: 4000,
+  });
+  if (typeof data !== 'object' || !Array.isArray(data?.results)) return [];
+  return data.results.map(t => ({
+    title: t.title || '',
+    hash: (t.infohash || '').toLowerCase(),
+    size: parseInt(t.size, 10) || 0,
+    seeders: parseInt(t.seeders, 10) || 0,
+    source: 'SolidTorrents',
+  })).filter(t => t.hash);
+}
+
 // ─── Metadata Lookup (Cinemeta) ─────────────────────────────────
 async function lookupMeta(imdbId, type) {
   const cacheKey = `meta:${type}:${imdbId}`;
@@ -378,7 +394,7 @@ async function lookupMeta(imdbId, type) {
 }
 
 const PROVIDERS = {
-  thepiratebay, yts, eztv, knaben, bitsearch, bt4g, btdig, torlock, torrentgalaxy, limetorrents, extto,
+  thepiratebay, yts, eztv, knaben, bitsearch, solidtorrents, bt4g, btdig, torlock, torrentgalaxy, limetorrents, extto,
 };
 
 /**
