@@ -14,7 +14,17 @@ A Stremio addon that streams movies and TV shows via [TorBox](https://torbox.app
 - **TorBox account** — Free tier works for torrents; Usenet requires Pro plan
 - **TorBox API Key** — Get it from your [TorBox Settings](https://torbox.app/settings)
 
-## Setup
+## Hosted Instance
+
+Configure and install directly at:
+**https://stremio-torbox.vercel.app/configure**
+
+Or install directly in Stremio via URL:
+```
+stremio://stremio-torbox.vercel.app/manifest.json
+```
+
+## Setup (Self-Hosted)
 
 ```bash
 cd stremio-torbox

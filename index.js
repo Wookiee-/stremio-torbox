@@ -4,6 +4,7 @@ const TorBoxAPI = require('./torbox-api');
 
 const PORT = process.env.PORT || 7000;
 const HOST = process.env.HOST || 'http://127.0.0.1';
+const PRODUCTION_URL = 'https://stremio-torbox.vercel.app';
 
 // ─── Manifest ────────────────────────────────────────────────────
 
@@ -111,7 +112,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
     // Cap at 50
     filtered = filtered.slice(0, 50);
 
-    const baseUrl = process.env.BASE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `${HOST}:${PORT}`);
+    const baseUrl = process.env.BASE_URL
+      || (process.env.VERCEL ? PRODUCTION_URL : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `${HOST}:${PORT}`));
 
     // Return instant lazy-resolved stream URLs (Torrentio style)
     const streams = filtered.map(result => {
