@@ -403,6 +403,8 @@ async function searchAllProviders(imdbId, type, season, episode) {
     query = name;
   }
 
+  const PROVIDER_TIMEOUT = 5000;
+
   const tasks = Object.entries(PROVIDERS).map(([pName, fn]) => {
     return (async () => {
       if (pName === 'yts' && type !== 'movie') return [];
@@ -444,59 +446,6 @@ async function searchAllProviders(imdbId, type, season, episode) {
 }
 
 // ─── Content filter ─────────────────────────────────────────────
-function filterByContent(records, name, type, season, episode) {
-  if (!name) return records;
-
-  const nameWords = normalizeTitle(name).split(/\s+/).filter(w => w.length > 1);
-  if (!nameWords.length) return records;
-
-  return records.filter(r => {
-    if (!r.title) return false;
-    const norm = normalizeTitle(r.title);
-
-    if (nameWords.length <= 2) {
-      const phraseRegex = new RegExp(`\\b${nameWords.map(w => escapeRegex(w)).join('\\s+')}\\b`);
-      if (!phraseRegex.test(norm)) return false;
-    } else {
-      const matchCount = nameWords.filter(w =>
-        new RegExp(`\\b${escapeRegex(w)}\\b`).test(norm)
-      ).length;
-      if (matchCount < Math.max(1, Math.ceil(nameWords.length * 0.5))) return false;
-    }
-
-    if (type === 'series' && season != null) {
-      const s = season;
-      const e = episode;
-      const hasSeasonEp = new RegExp(
-        e != null
-          ? `s0*${s}\\s*e0*${e}\\b`
-          : `s0*${s}(e\\d|\\b)`,
-        'i'
-      ).test(r.title);
-      const hasLooseEp = e != null && new RegExp(`\\b${s}x0*${e}\\b`, 'i').test(r.title);
-      const hasSeasonPack = new RegExp(
-        `\\bseason\\s*0*${s}\\b|\\bcomplete\\b.*\\bs0*${s}\\b`,
-        'i'
-      ).test(r.title);
-      if (!hasSeasonEp && !hasLooseEp && !hasSeasonPack) return false;
-    }
-
-    return true;
-  });
-}
-
-function normalizeTitle(str) {
-  return str.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-module.exports = { searchAllProviders, PROVIDERS };
-
-// ─── Content filter (ported from Magnetio) ──────────────────────
-
 function filterByContent(records, name, type, season, episode) {
   if (!name) return records;
 
