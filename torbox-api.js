@@ -49,24 +49,32 @@ function sortByQualityThenSeeders(results) {
 
 // ─── HTTP helpers ────────────────────────────────────────────────
 
-async function tbRequest(apiKey, method, path, { params, body } = {}) {
+async function tbRequest(apiKey, method, path, { params, body } = {}, retriedAuth = false) {
   const query = params ? `?${new URLSearchParams(params)}` : '';
   const isJson = body && !(body instanceof URLSearchParams);
-  const response = await axios({
-    method,
-    url: `${TB_BASE}${path}${query}`,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'User-Agent': TB_UA,
-      Accept: 'application/json',
-      ...(isJson ? { 'Content-Type': 'application/json' } : {}),
-    },
-    data: isJson ? JSON.stringify(body) : body,
-    timeout: 10000,
-  });
-  const result = response.data;
-  if (!result?.success) throw result;
-  return result.data;
+  try {
+    const response = await axios({
+      method,
+      url: `${TB_BASE}${path}${query}`,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'User-Agent': TB_UA,
+        Accept: 'application/json',
+        ...(isJson ? { 'Content-Type': 'application/json' } : {}),
+      },
+      data: isJson ? JSON.stringify(body) : body,
+      timeout: 10000,
+    });
+    const result = response.data;
+    if (!result?.success) throw result;
+    return result.data;
+  } catch (err) {
+    if (!retriedAuth && err?.response?.status === 403 && err?.response?.data?.error === 'AUTH_ERROR') {
+      await sleep(1500);
+      return tbRequest(apiKey, method, path, { params, body }, true);
+    }
+    throw err;
+  }
 }
 
 function sleep(ms) {
