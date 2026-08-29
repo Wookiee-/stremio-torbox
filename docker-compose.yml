@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  stremio-torbox:
+    build: .
+    container_name: stremio-torbox
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+    environment:
+      - PORT=7000
+      - HOST=0.0.0.0
+      - BASE_URL=https://your-domain-or-ip.com

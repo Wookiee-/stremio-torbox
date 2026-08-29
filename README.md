@@ -1,117 +1,98 @@
 # TorBox Stremio Addon
 
-A Stremio addon that streams movies and TV shows via [TorBox](https://torbox.app) cached torrents and Usenet NZBs. Uses TorBox's debrid service to instantly serve cached content — no waiting for downloads.
+A fast Stremio addon that streams movies and TV shows via [TorBox](https://torbox.app) cached torrents. Built with multi-provider scraping and Torrentio-style on-demand stream resolution.
 
-## How It Works
+## Features
 
-1. **Search** — Queries TorBox's search API for torrents and Usenet NZBs matching the IMDB ID
-2. **Cache Check** — Filters results to only show content already cached on TorBox servers
-3. **Stream** — Generates direct download links from TorBox's CDN for instant playback in Stremio
+- ⚡ **Instant Playback** — Cached torrents stream directly from TorBox CDN via 302 redirects
+- 🔍 **Multi-Provider Scraping** — Aggregates torrents from TPB, Knaben, BitSearch, YTS, EZTV, and more
+- 🎯 **Deduplication** — Clean, duplicate-free stream lists
+- 🎛️ **Torrentio-Style Setup** — Modern configuration UI with resolution exclusion and direct Stremio installation
+- 🚀 **VPS & Docker Ready** — Built for high-speed continuous Node.js runtime
 
-## Prerequisites
+---
 
-- **Node.js** (v18+)
-- **TorBox account** — Free tier works for torrents; Usenet requires Pro plan
-- **TorBox API Key** — Get it from your [TorBox Settings](https://torbox.app/settings)
+## Deployment on VPS
 
-## Hosted Instance
-
-Configure and install directly at:
-**https://stremio-torbox.vercel.app/configure**
-
-Or install directly in Stremio via URL:
-```
-stremio://stremio-torbox.vercel.app/manifest.json
-```
-
-## Setup (Self-Hosted)
+### Option 1: Docker / Docker Compose (Recommended)
 
 ```bash
+git clone https://github.com/Wookiee-/stremio-torbox.git
+cd stremio-torbox
+
+# Edit BASE_URL in docker-compose.yml if using a custom domain
+docker compose up -d --build
+```
+
+The addon will be available at `http://YOUR_SERVER_IP:7000/configure`.
+
+---
+
+### Option 2: PM2 (Node.js)
+
+```bash
+git clone https://github.com/Wookiee-/stremio-torbox.git
 cd stremio-torbox
 npm install
-npm start
+
+# Install PM2 globally if not already installed
+npm install -g pm2
+
+# Start the addon
+pm2 start index.js --name "stremio-torbox"
+pm2 save
+pm2 startup
 ```
 
-The server starts at `http://127.0.0.1:7000` by default.
+---
 
-## Install in Stremio
+### Option 3: Systemd Service
 
-1. Open Stremio
-2. Go to **Addons** → **Community Addons**
-3. Click **Install via URL**
-4. Enter: `http://127.0.0.1:7000/manifest.json`
+Create `/etc/systemd/system/stremio-torbox.service`:
 
-Or open this URL directly in your browser:
+```ini
+[Unit]
+Description=TorBox Stremio Addon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/stremio-torbox
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=10
+Environment=PORT=7000
+Environment=HOST=0.0.0.0
+Environment=BASE_URL=https://your-domain.com
+
+[Install]
+WantedBy=multi-user.target
 ```
-stremio://http://127.0.0.1:7000/manifest.json
-```
 
-You'll be prompted to enter your TorBox API key during configuration.
-
-## Test Manually
-
+Enable and start:
 ```bash
-# Validate API key and search for a movie
-curl "http://127.0.0.1:7000/test/tt1234567?key=YOUR_API_KEY"
-
-# Test a TV episode
-curl "http://127.0.0.1:7000/test/tt1234567/1/1?key=YOUR_API_KEY"
+systemctl daemon-reload
+systemctl enable stremio-torbox
+systemctl start stremio-torbox
 ```
 
-## Configuration
+---
 
-| Environment Variable | Default            | Description                       |
-|---------------------|--------------------|-----------------------------------|
-| `PORT`              | `7000`             | Server port                       |
-| `HOST`              | `http://127.0.0.1` | Server host                       |
-| `TORBOX_API_KEY`    | —                  | Default API key (optional)        |
+## Environment Variables
 
-## Project Structure
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `7000` | Port for the HTTP server |
+| `HOST` | `0.0.0.0` | Listen host interface |
+| `BASE_URL` | `http://127.0.0.1:7000` | Public URL (e.g. `https://torbox.yourdomain.com`) used for stream resolve links |
+| `TORBOX_API_KEY` | — | Default API key for `/test` endpoints |
 
-```
-stremio-torbox/
-├── index.js          # Stremio addon server
-├── torbox-api.js     # TorBox API client (search, cache, download)
-├── package.json
-└── README.md
-```
+---
 
-## How the TorBox Integration Works
+## Setup & Configuration
 
-### Torrents
-1. Searches TorBox's search API by IMDB ID
-2. Filters results to cached torrents only
-3. Selects the best video file (largest MKV/MP4, or matches SxxExx for series)
-4. Generates a direct CDN download link via TorBox's `requestdl` API
-
-### Usenet (Pro only)
-1. Searches TorBox's Usenet indexers by IMDB ID
-2. Filters to cached NZB results
-3. Generates download links the same way as torrents
-
-### Cache Status
-- TorBox caches popular torrents server-side
-- Cached content streams instantly at full speed
-- Non-cached content would need to download first (not supported in this addon)
-
-## API Endpoints
-
-| Endpoint                          | Description                     |
-|----------------------------------|---------------------------------|
-| `GET /manifest.json`             | Stremio manifest                |
-| `GET /health`                    | Health check                    |
-| `GET /test/:imdbId?key=KEY`      | Test movie search               |
-| `GET /test/:imdbId/:s/:e?key=KEY`| Test TV episode search          |
-| `GET /configure`                 | Configuration page (SDK)        |
-
-## Notes
-
-- Only cached content is returned — this ensures instant streaming
-- The addon uses TorBox's own search API (not third-party torrent trackers)
-- API rate limit: 300 requests/minute per API key
-- Usenet content requires a TorBox Pro subscription
-- Torrents are available on all TorBox plans (including free)
-
-## License
-
-ISC
+1. Open `http://YOUR_SERVER_IP:7000/configure` (or your domain)
+2. Enter your **TorBox API Key** from [torbox.app/settings](https://torbox.app/settings)
+3. Select your preferred resolutions to exclude and sorting order
+4. Click **Install to Stremio** or copy the installation link

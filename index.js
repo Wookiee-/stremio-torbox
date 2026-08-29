@@ -3,8 +3,7 @@ const express = require('express');
 const TorBoxAPI = require('./torbox-api');
 
 const PORT = process.env.PORT || 7000;
-const HOST = process.env.HOST || 'http://127.0.0.1';
-const PRODUCTION_URL = 'https://stremio-torbox.vercel.app';
+const HOST = process.env.HOST || '0.0.0.0';
 
 // ─── Manifest ────────────────────────────────────────────────────
 
@@ -112,8 +111,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
     // Cap at 50
     filtered = filtered.slice(0, 50);
 
-    const baseUrl = process.env.BASE_URL
-      || (process.env.VERCEL ? PRODUCTION_URL : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `${HOST}:${PORT}`));
+    const baseUrl = process.env.BASE_URL || `http://127.0.0.1:${PORT}`;
 
     // Return instant lazy-resolved stream URLs (Torrentio style)
     const streams = filtered.map(result => {
@@ -423,21 +421,23 @@ app.get('/test/:imdbId/:season/:episode', async (req, res) => {
 
 // ─── Start / Export ──────────────────────────────────────────────
 
-if (process.env.VERCEL !== '1' && !process.env.VERCEL_URL) {
-  const server = app.listen(PORT, () => {
-    console.log(`TorBox Stremio Addon running at ${HOST}:${PORT}`);
-  });
-
-  function shutdown(signal) {
-    console.log(`Stopping TorBox Stremio Addon (${signal})...`);
-    server.close(() => {
-      console.log('TorBox Stremio Addon stopped.');
-      process.exit(0);
-    });
+const server = app.listen(PORT, HOST, () => {
+  const displayHost = HOST === '0.0.0.0' ? '127.0.0.1' : HOST;
+  console.log(`TorBox Stremio Addon running at http://${displayHost}:${PORT}`);
+  if (process.env.BASE_URL) {
+    console.log(`Public URL: ${process.env.BASE_URL}`);
   }
+});
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+function shutdown(signal) {
+  console.log(`Stopping TorBox Stremio Addon (${signal})...`);
+  server.close(() => {
+    console.log('TorBox Stremio Addon stopped.');
+    process.exit(0);
+  });
 }
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 module.exports = app;
