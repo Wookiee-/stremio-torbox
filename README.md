@@ -79,6 +79,22 @@ systemctl start stremio-torbox
 
 ---
 
+## HTTPS / Nginx Reverse Proxy (Automated Script)
+
+To set up an Nginx reverse proxy with automated Let's Encrypt SSL certificates on your VPS:
+
+```bash
+chmod +x setup-nginx.sh
+sudo ./setup-nginx.sh torbox.yourdomain.com your-email@example.com
+```
+
+The script will:
+1. Install Nginx and Certbot automatically (Debian/Ubuntu, CentOS/RHEL/Fedora).
+2. Create and enable the Nginx reverse-proxy configuration on port `7000`.
+3. Obtain and configure a free SSL certificate with automatic HTTP -> HTTPS redirection.
+
+---
+
 ## Environment Variables
 
 | Variable | Default | Description |
