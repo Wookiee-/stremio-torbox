@@ -1,9 +1,8 @@
 /**
- * TorBox API Client — based on Torrentio's implementation
+ * TorBox API Client — Torrentio-style cached check and lazy resolve
  */
 
 const axios = require('axios');
-const FormData = require('form-data');
 const querystring = require('querystring');
 const { searchAllProviders } = require('./providers');
 
@@ -60,7 +59,7 @@ async function tbRequest(apiKey, method, path, { params, body } = {}) {
       ...(isJson ? { 'Content-Type': 'application/json' } : {}),
     },
     data: isJson ? JSON.stringify(body) : body,
-    timeout: 15000,
+    timeout: 10000,
   });
   const result = response.data;
   if (!result?.success) throw result;
@@ -78,9 +77,7 @@ class TorBoxAPI {
     this.apiKey = apiKey;
   }
 
-  // ─── Cache check — POST with hashes (Torrentio style) ────────
-  // Returns map of hash → { files, ... } so we get file info directly
-
+  // ─── Cache check (batch check up to 100 hashes) ─────────────
   async getCachedStreams(hashes) {
     if (!hashes || hashes.length === 0) return new Map();
 
@@ -105,11 +102,9 @@ class TorBoxAPI {
     }
   }
 
-  // ─── Resolve a cached torrent to a download URL (Torrentio style) ─
-
-  async resolve(infoHash) {
+  // ─── Resolve a single torrent to direct stream URL (On-demand when played) ─
+  async resolve(infoHash, fileName) {
     try {
-      // Create or locate the torrent (requires form-encoded body, not JSON)
       const data = await tbRequest(this.apiKey, 'POST', '/api/torrents/createtorrent', {
         body: new URLSearchParams({ magnet: `magnet:?xt=urn:btih:${infoHash}` }),
       });
@@ -117,30 +112,30 @@ class TorBoxAPI {
       if (!data?.torrent_id && !data?.queued_id) return null;
       const torrentId = data.torrent_id || data.queued_id;
 
-      // Get torrent info (files list)
-      const torrents = await tbRequest(this.apiKey, 'GET', '/api/torrents/mylist', {
+      let torrents = await tbRequest(this.apiKey, 'GET', '/api/torrents/mylist', {
         params: { id: torrentId },
       });
 
-      const torrent = Array.isArray(torrents) ? torrents[0] : torrents;
+      let torrent = Array.isArray(torrents) ? torrents[0] : torrents;
       if (!torrent) return null;
 
-      // Check if ready
+      // If not ready, brief poll
       if (!torrent.download_present) {
-        // Not ready yet — retry up to 3 times for cached torrents
         for (let i = 0; i < 3; i++) {
-          await sleep(1000);
+          await sleep(800);
           const retry = await tbRequest(this.apiKey, 'GET', '/api/torrents/mylist', {
             params: { id: torrentId },
           });
           const rt = Array.isArray(retry) ? retry[0] : retry;
-          if (rt?.download_present) return this._buildUrl(rt, torrentId);
+          if (rt?.download_present) {
+            torrent = rt;
+            break;
+          }
           if (['error', 'dead'].includes(rt?.download_state)) return null;
         }
-        return null;
       }
 
-      return this._buildUrl(torrent, torrentId);
+      return this._buildUrl(torrent, torrentId, fileName);
     } catch (err) {
       const detail = err?.detail || err?.error || err?.message || '';
       console.error(`[torbox] resolve error: ${typeof detail === 'string' ? detail.substring(0, 200) : JSON.stringify(detail).substring(0, 200)}`);
@@ -148,18 +143,26 @@ class TorBoxAPI {
     }
   }
 
-  _buildUrl(torrent, torrentId) {
-    const files = torrent.files ?? [];
+  _buildUrl(torrent, torrentId, targetFileName) {
+    const files = torrent?.files ?? [];
     const VIDEO_EXTS = /\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|m2ts)$/i;
 
     const videos = files.filter(f => VIDEO_EXTS.test(f.short_name ?? f.name ?? ''));
-    const target = videos.length
-      ? videos.reduce((a, b) => (a.size ?? 0) >= (b.size ?? 0) ? a : b)
-      : files[0];
+    let target = null;
+
+    if (targetFileName) {
+      target = videos.find(v => (v.name || '').toLowerCase().includes(targetFileName.toLowerCase())) ||
+               files.find(f => (f.name || '').toLowerCase().includes(targetFileName.toLowerCase()));
+    }
+
+    if (!target) {
+      target = videos.length
+        ? videos.reduce((a, b) => (a.size ?? 0) >= (b.size ?? 0) ? a : b)
+        : files[0];
+    }
 
     if (!target) return null;
 
-    // Torrentio-style permalink — no requestdl API call needed
     const params = {
       token: this.apiKey,
       torrent_id: torrentId,
@@ -169,15 +172,14 @@ class TorBoxAPI {
     return `${TB_BASE}/api/torrents/requestdl?${querystring.stringify(params)}`;
   }
 
-  // ─── Main search ──────────────────────────────────────────────
-
-  async searchAll(imdbId, type, season, episode) {
-    console.log(`[torbox] Searching for ${imdbId} (${type})...`);
-
+  // ─── Main search — returns cached torrents directly ───────────
+  async searchAll(imdbId, type, season, episode, options = {}) {
     const records = await searchAllProviders(imdbId, type, season, episode);
     if (records.length === 0) return [];
 
-    // Deduplicate by hash, keep highest seeders
+    const { excludedQualities = [], maxSizeBytes = 0, dedupe = false } = options;
+
+    // Deduplicate by infohash, keeping the entry with the highest seeders
     const byHash = new Map();
     for (const r of records) {
       if (!r.hash) continue;
@@ -187,35 +189,58 @@ class TorBoxAPI {
       }
     }
 
-    const sorted = sortByQualityThenSeeders([...byHash.values()]);
+    let candidates = [...byHash.values()];
 
-    // Cap at 100 candidates (TorBox checkcached handles up to 100 hashes)
-    const candidates = sorted.slice(0, 100);
-    console.log(`[torbox] Checking cache for ${candidates.length} candidates...`);
+    // Early filter: prune excluded qualities and size limits BEFORE cache checking
+    if (excludedQualities.length > 0 || maxSizeBytes > 0) {
+      candidates = candidates.filter(r => {
+        const q = extractQuality(r.title);
+        if (excludedQualities.includes(q)) return false;
+        if (maxSizeBytes > 0 && r.size > maxSizeBytes) return false;
+        return true;
+      });
+    }
+
+    candidates = sortByQualityThenSeeders(candidates);
+
+    // Early deduplication before cache checking: only check top stream per provider per resolution
+    if (dedupe) {
+      const seen = new Set();
+      candidates = candidates.filter(r => {
+        const provider = (r.source || 'unknown').toLowerCase();
+        const quality = extractQuality(r.title);
+        const key = `${provider}:${quality}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    candidates = candidates.slice(0, 100);
 
     const hashes = candidates.map(r => r.hash);
     const cachedMap = await this.getCachedStreams(hashes);
 
     if (cachedMap.size === 0) {
-      console.log(`[torbox] No cached results found`);
       return [];
     }
 
     const results = [];
     for (const record of candidates) {
       if (!cachedMap.has(record.hash)) continue;
+      const cachedInfo = cachedMap.get(record.hash);
       results.push({
         type: 'torrent',
         title: record.title,
         hash: record.hash,
-        size: record.size || 0,
+        size: record.size || cachedInfo?.size || 0,
         seeders: record.seeders || 0,
         source: record.source || '',
         quality: extractQuality(record.title),
+        files: cachedInfo?.files || [],
       });
     }
 
-    console.log(`[torbox] ${results.length} cached results (${cachedMap.size} hashes matched)`);
     return results;
   }
 
