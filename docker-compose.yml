@@ -11,4 +11,12 @@ services:
       - PORT=7000
       - HOST=0.0.0.0
       - BASE_URL=https://torbox.ddns.net
+      - FLARESOLVERR_URL=http://flaresolverr:8191
+
+  flaresolverr:
+    image: flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
 

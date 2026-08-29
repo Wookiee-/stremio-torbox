@@ -45,11 +45,11 @@ function extractInfoHash(magnet) {
 
 function parseSize(str) {
   if (!str) return 0;
-  const m = str.match(/([\d.]+)\s*(B|KB|MB|GB|TB)\b/i);
+  const m = str.match(/([\d.]+)\s*([KMGTP]?)(i?)B\b/i);
   if (!m) return 0;
   const v = parseFloat(m[1]);
-  const u = { b: 1, kb: 1024, mb: 1024**2, gb: 1024**3, tb: 1024**4 };
-  return Math.round(v * (u[m[2].toLowerCase()] || 1));
+  const u = { '': 1, k: 1024, m: 1024**2, g: 1024**3, t: 1024**4, p: 1024**5 };
+  return Math.round(v * (u[(m[2] || '').toLowerCase()] || 1));
 }
 
 function parseIntSafe(v) {
@@ -96,6 +96,72 @@ async function httpGet(url, { params = {}, timeout = 4000, retries = 0 } = {}) {
     } catch (err) {
       if (i === retries) throw err;
     }
+  }
+}
+
+// FlareSolverr bypass for Cloudflare-protected providers (optional)
+const FLARESOLVERR_URL = (process.env.FLARESOLVERR_URL || '').replace(/\/+$/, '');
+const FLARE_SESSION = 'torbox';
+const flareSessions = new Set();
+
+function buildUrl(url, params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return qs ? `${url}?${qs}` : url;
+}
+
+async function httpPost(url, body, timeout = 30000) {
+  const parsed = new URL(url);
+  const text = await new Promise((resolve, reject) => {
+    const req = (parsed.protocol === 'https:' ? https : http).request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.write(body);
+    req.end();
+  });
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+async function flareRequest(cmd, timeout) {
+  const res = await httpPost(`${FLARESOLVERR_URL}/v1`, JSON.stringify({ ...cmd, maxTimeout: cmd.maxTimeout || 25000 }), timeout);
+  if (res?.status !== 'ok') throw new Error(res?.message || 'flaresolverr error');
+  return res;
+}
+
+async function flareGet(url) {
+  if (!flareSessions.has(FLARE_SESSION)) {
+    flareSessions.add(FLARE_SESSION);
+    try { await flareRequest({ cmd: 'sessions.create', session: FLARE_SESSION, maxTimeout: 15000 }, 20000); } catch {}
+  }
+  try {
+    const res = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url, maxTimeout: 25000 }, 30000);
+    return res.solution.response;
+  } catch (err) {
+    try { await flareRequest({ cmd: 'sessions.destroy', session: FLARE_SESSION }, 10000); } catch {}
+    flareSessions.delete(FLARE_SESSION);
+    flareSessions.add(FLARE_SESSION);
+    try { await flareRequest({ cmd: 'sessions.create', session: FLARE_SESSION, maxTimeout: 20000 }, 25000); } catch {}
+    const res = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url, maxTimeout: 25000 }, 30000);
+    return res.solution.response;
+  }
+}
+
+async function fetchHtml(url, { params = {}, timeout = 4000, flare = false, flareFallback = false } = {}) {
+  const fullUrl = buildUrl(url, params);
+  if (flare && FLARESOLVERR_URL) return flareGet(fullUrl);
+  try {
+    return await httpGet(fullUrl, { timeout });
+  } catch (err) {
+    if (flareFallback && FLARESOLVERR_URL) return flareGet(fullUrl);
+    throw err;
   }
 }
 
@@ -213,9 +279,9 @@ async function bitsearch(query) {
   return results.slice(0, 30);
 }
 
-// ─── 6. BT4G (HTML scraper) ──────────────────────────────────────
+// ─── 6. BT4G (HTML scraper — Cloudflare, via FlareSolverr) ───────
 async function bt4g(query) {
-  const html = await httpGet(`https://bt4gprx.com/search/${encodeURIComponent(query)}/byseeders/1`, { timeout: 4000 });
+  const html = await fetchHtml(`https://bt4gprx.com/search/${encodeURIComponent(query)}/byseeders/1`, { flare: true });
   if (typeof html !== 'string') return [];
   const $ = cheerio.load(html);
   const results = [];
@@ -289,11 +355,11 @@ async function torlock(query, type) {
   return results;
 }
 
-// ─── 9. TorrentGalaxy (HTML scraper) ─────────────────────────────
+// ─── 9. TorrentGalaxy (HTML scraper — Cloudflare, via FlareSolverr) ──
 async function torrentgalaxy(query) {
-  const html = await httpGet('https://torrentgalaxy.to/torrents.php', {
+  const html = await fetchHtml('https://en.torrentgalaxy-official.is/torrents.php', {
     params: { search: query, nox: 1, sort: 'seeders', order: 'desc' },
-    timeout: 4000,
+    flare: true,
   });
   if (typeof html !== 'string') return [];
   const $ = cheerio.load(html);
@@ -339,28 +405,208 @@ async function limetorrents(query, type) {
   return results;
 }
 
-// ─── 11. EXT.to (HTML scraper) ───────────────────────────────────
-async function extto(query, type) {
-  const cat = type === 'movie' ? 'movies' : 'series';
-  const html = await httpGet(`https://ext.to/search/${encodeURIComponent(query)}/${cat}/`, { timeout: 4000 });
+// ─── 11. 1337x (HTML scraper — Cloudflare, via FlareSolverr; magnets from detail pages) ──
+async function leetx(query) {
+  const html = await fetchHtml(`https://1337x.to/search/${encodeURIComponent(query)}/1/`, { flare: true });
+  if (typeof html !== 'string') return [];
+  const $ = cheerio.load(html);
+  const rows = [];
+  $('table.table-list tbody tr').each((_, row) => {
+    const cells = $(row).find('td');
+    if (cells.length < 4) return;
+    const link = cells.eq(0).find('a[href*="/torrent/"]').first();
+    const title = link.text().trim();
+    const href = link.attr('href') || '';
+    if (!title || !href) return;
+    rows.push({
+      title,
+      detailUrl: href.startsWith('http') ? href : `https://1337x.to${href}`,
+      seeders: parseIntSafe(cells.eq(1).text()),
+      size: parseSize(cells.eq(3).text()),
+    });
+  });
+  const details = await Promise.allSettled(rows.slice(0, 3).map(async r => {
+    const page = await fetchHtml(r.detailUrl, { flare: true });
+    if (typeof page !== 'string') return null;
+    const magnet = cheerio.load(page)('a[href^="magnet:"]').first().attr('href') || '';
+    const hash = extractInfoHash(magnet);
+    if (!hash) return null;
+    return { title: r.title, hash, size: r.size, seeders: r.seeders, source: '1337x' };
+  }));
+  return details.map(d => (d.status === 'fulfilled' ? d.value : null)).filter(Boolean);
+}
+
+// ─── 12. KickassTorrents (HTML scraper — Cloudflare, via FlareSolverr) ──
+async function kickasstorrents(query) {
+  const html = await fetchHtml(`https://kickasstorrents.to/usearch/${encodeURIComponent(query)}/`, { flare: true });
   if (typeof html !== 'string') return [];
   const $ = cheerio.load(html);
   const results = [];
-  $('table tbody tr').each((_, row) => {
+  $('table.data tr').each((_, row) => {
+    const $row = $(row);
+    const title = $row.find('a.cellMainLink').first().text().trim();
+    const magnet = $row.find('a[href^="magnet:"]').first().attr('href') || '';
+    const hash = extractInfoHash(magnet);
+    if (!hash || !title) return;
+    const cells = $row.find('td');
+    results.push({
+      title, hash,
+      seeders: parseIntSafe($row.find('td.green').first().text() || cells.eq(4).text()),
+      size: parseSize(cells.eq(1).text()),
+      source: 'KickassTorrents',
+    });
+  });
+  return results;
+}
+
+// ─── 13. MagnetDL (HTML scraper) ─────────────────────────────────
+async function magnetdl(query) {
+  const q = query.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!q) return [];
+  const html = await httpGet(`https://www.magnetdl.com/${q.charAt(0)}/${q}/`, { timeout: 4000 });
+  if (typeof html !== 'string') return [];
+  const $ = cheerio.load(html);
+  const results = [];
+  $('table#searchResults tbody tr').each((_, row) => {
     const cells = $(row).find('td');
-    if (cells.length < 5) return;
-    const title = cells.eq(1).find('a').first().text().trim();
-    const magnet = $(row).find('a[href^="magnet:"]').first().attr('href') || '';
+    if (cells.length < 6) return;
+    const title = (cells.eq(0).find('a[title]').attr('title') || cells.eq(0).find('a').first().text() || '').trim();
+    const magnet = cells.eq(1).find('a[href^="magnet:"]').first().attr('href') || '';
     const hash = extractInfoHash(magnet);
     if (!hash || !title) return;
     results.push({
       title, hash,
-      seeders: parseIntSafe(cells.eq(3).text()),
-      size: parseSize(cells.eq(2).text()),
-      source: 'EXT',
+      seeders: parseIntSafe(cells.eq(4).text()),
+      size: parseSize(cells.eq(3).text()),
+      source: 'MagnetDL',
     });
   });
   return results;
+}
+
+// ─── 14/15. NyaaSi + HorribleSubs (HTML scraper — anime) ─────────
+async function nyaaFetch(query, source) {
+  const html = await httpGet('https://nyaa.si/', {
+    params: { f: 0, c: '0_0', q: query, s: 'seeders', o: 'desc' },
+    timeout: 4000,
+  });
+  if (typeof html !== 'string') return [];
+  const $ = cheerio.load(html);
+  const results = [];
+  $('table.table tbody tr').each((_, row) => {
+    const cells = $(row).find('td');
+    if (cells.length < 6) return;
+    const title = cells.eq(1).find('a').not('.comments').first().text().trim();
+    const magnet = cells.eq(2).find('a[href^="magnet:"]').first().attr('href') || '';
+    const hash = extractInfoHash(magnet);
+    if (!hash || !title) return;
+    results.push({
+      title, hash,
+      seeders: parseIntSafe(cells.eq(5).text()),
+      size: parseSize(cells.eq(3).text()),
+      source,
+      anime: true,
+    });
+  });
+  return results;
+}
+
+async function nyaasi(query) {
+  return nyaaFetch(query, 'NyaaSi');
+}
+
+async function horriblesubs(query) {
+  return nyaaFetch(`HorribleSubs ${query}`, 'HorribleSubs');
+}
+
+// ─── 16. TokyoTosho → AnimeTosho (HTML scraper — anime) ──────────
+async function tokyotosho(query) {
+  const html = await fetchHtml('https://animetosho.org/search', {
+    params: { q: query },
+    timeout: 4000,
+  });
+  if (typeof html !== 'string') return [];
+  const $ = cheerio.load(html);
+  const results = [];
+  $('div.home_list_entry').each((_, row) => {
+    const $row = $(row);
+    const title = $row.find('div.link a').first().text().trim();
+    const magnet = $row.find('a[href^="magnet:"]').first().attr('href') || '';
+    const hash = extractInfoHash(magnet);
+    if (!hash || !title) return;
+    const sizeTitle = $row.find('div.size').first().attr('title') || '';
+    const bytes = (sizeTitle.match(/([\d,]+)\s*bytes/i) || [])[1];
+    results.push({
+      title, hash,
+      seeders: 0,
+      size: bytes ? parseInt(bytes.replace(/,/g, ''), 10) : parseSize($row.find('div.size').first().text()),
+      source: 'AnimeTosho',
+      anime: true,
+    });
+  });
+  return results;
+}
+
+// ─── 17. nekoBT (HTML scraper — anime) ───────────────────────────
+async function nekobt(query) {
+  const html = await httpGet('https://nekobt.to/search', {
+    params: { query: query, s: 'seeders' },
+    timeout: 4000,
+  });
+  if (typeof html !== 'string') return [];
+  const $ = cheerio.load(html);
+  const results = [];
+  $('tbody tr').each((_, row) => {
+    const $row = $(row);
+    const title = $row.find('a[href^="/torrents/"]').first().text().replace(/\s+/g, ' ').trim();
+    const magnet = $row.find('a[href^="magnet:"]').first().attr('href') || '';
+    const hash = extractInfoHash(magnet);
+    if (!hash || !title) return;
+    const seedM = $row.find('span.text-success').first().text().match(/(\d+)/);
+    const sizeText = $row.find('td').filter((_, td) => /[\d.]+\s*[KMGTP]?i?B\b/i.test($(td).text())).first().text();
+    results.push({
+      title, hash,
+      seeders: seedM ? parseInt(seedM[1], 10) : 0,
+      size: parseSize(sizeText),
+      source: 'nekoBT',
+      anime: true,
+    });
+  });
+  return results;
+}
+
+// ─── 18. RARBG (rargb.to clone — magnets from detail pages) ──────
+async function rarbg(query) {
+  const html = await fetchHtml('https://rargb.to/torrents.php', {
+    params: { search: query },
+    flareFallback: true,
+  });
+  if (typeof html !== 'string') return [];
+  const $ = cheerio.load(html);
+  const rows = [];
+  $('tr.lista2').each((_, row) => {
+    const cells = $(row).find('td');
+    if (cells.length < 6) return;
+    const link = cells.eq(1).find('a[href^="/torrent/"]').first();
+    const title = link.attr('title') || link.text().trim();
+    const href = link.attr('href') || '';
+    if (!title || !href) return;
+    rows.push({
+      title,
+      detailUrl: href.startsWith('http') ? href : `https://rargb.to${href}`,
+      seeders: parseIntSafe(cells.eq(5).text()),
+      size: parseSize(cells.eq(4).text()),
+    });
+  });
+  const details = await Promise.allSettled(rows.slice(0, 3).map(async r => {
+    const page = await fetchHtml(r.detailUrl, { flareFallback: true });
+    if (typeof page !== 'string') return null;
+    const magnet = cheerio.load(page)('a[href^="magnet:"]').first().attr('href') || '';
+    const hash = extractInfoHash(magnet);
+    if (!hash) return null;
+    return { title: r.title, hash, size: r.size, seeders: r.seeders, source: 'RARBG' };
+  }));
+  return details.map(d => (d.status === 'fulfilled' ? d.value : null)).filter(Boolean);
 }
 
 // ─── Metadata Lookup (Cinemeta) ─────────────────────────────────
@@ -378,8 +624,17 @@ async function lookupMeta(imdbId, type) {
 }
 
 const PROVIDERS = {
-  thepiratebay, yts, eztv, knaben, bitsearch, bt4g, btdig, torlock, torrentgalaxy, limetorrents, extto,
+  thepiratebay, yts, eztv,
+  '1337x': leetx,
+  rarbg,
+  kickasstorrents, torrentgalaxy, magnetdl,
+  horriblesubs, nyaasi, tokyotosho, nekobt,
+  knaben, bitsearch, bt4g, btdig, torlock, limetorrents,
 };
+
+const CF_PROVIDERS = new Set(['1337x', 'rarbg', 'kickasstorrents', 'torrentgalaxy', 'bt4g']);
+
+const ANIME_PROVIDERS = new Set(['horriblesubs', 'nyaasi', 'tokyotosho', 'nekobt']);
 
 /**
  * Search all providers in parallel with fast timeouts and deduplication.
@@ -405,18 +660,22 @@ async function searchAllProviders(imdbId, type, season, episode) {
 
   const PROVIDER_TIMEOUT = 5000;
 
-  const tasks = Object.entries(PROVIDERS).map(([pName, fn]) => {
-    return (async () => {
-      if (pName === 'yts' && type !== 'movie') return [];
-      if (pName === 'eztv' && type !== 'series') return [];
-      const args = pName === 'eztv' ? [imdbId, season, episode]
-        : pName === 'thepiratebay' ? [query]
-        : pName === 'yts' ? [imdbId]
-        : [query, type];
-      const timer = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), PROVIDER_TIMEOUT));
-      return Promise.race([fn(...args), timer]);
-    })().catch(() => []);
-  });
+  const tasks = Object.entries(PROVIDERS)
+    .filter(([pName]) => !(ANIME_PROVIDERS.has(pName) && !name))
+    .map(([pName, fn]) => {
+      return (async () => {
+        if (pName === 'yts' && type !== 'movie') return [];
+        if (pName === 'eztv' && type !== 'series') return [];
+        const args = pName === 'eztv' ? [imdbId, season, episode]
+          : pName === 'thepiratebay' ? [query]
+          : pName === 'yts' ? [imdbId]
+          : ANIME_PROVIDERS.has(pName) ? [name]
+          : [query, type];
+        const timeout = CF_PROVIDERS.has(pName) && FLARESOLVERR_URL ? 50000 : PROVIDER_TIMEOUT;
+        const timer = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeout));
+        return Promise.race([fn(...args), timer]);
+      })().catch(() => []);
+    });
 
   const allSettled = await Promise.allSettled(tasks);
   const allResults = [];
@@ -480,7 +739,11 @@ function filterByContent(records, name, type, season, episode) {
         `\\bseason\\s*0*${s}\\b|\\bcomplete\\b.*\\bs0*${s}\\b`,
         'i'
       ).test(r.title);
-      if (!hasSeasonEp && !hasLooseEp && !hasSeasonPack) return false;
+      let hasAnimeAbsEp = false;
+      if (r.anime && s === 1 && e != null) {
+        hasAnimeAbsEp = new RegExp(`(?:^|[^a-z0-9])[ep]{0,2}0*${e}(?![\\d.]*\\d)(?![a-z-])`, 'i').test(r.title);
+      }
+      if (!hasSeasonEp && !hasLooseEp && !hasSeasonPack && !hasAnimeAbsEp) return false;
     }
 
     return true;
