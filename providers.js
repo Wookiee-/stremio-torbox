@@ -139,18 +139,28 @@ async function flareRequest(cmd, timeout) {
 async function flareGet(url) {
   if (!flareSessions.has(FLARE_SESSION)) {
     flareSessions.add(FLARE_SESSION);
-    try { await flareRequest({ cmd: 'sessions.create', session: FLARE_SESSION, maxTimeout: 15000 }, 20000); } catch {}
+    try {
+      await flareRequest({ cmd: 'sessions.create', session: FLARE_SESSION, maxTimeout: 15000 }, 20000);
+    } catch (err) {
+      console.error(`[flare] session create failed: ${err?.message || err}`);
+    }
   }
   try {
     const res = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url, maxTimeout: 25000 }, 30000);
     return res.solution.response;
   } catch (err) {
+    console.error(`[flare] request failed (${String(url).substring(0, 80)}): ${err?.message || err}; retrying with fresh session`);
     try { await flareRequest({ cmd: 'sessions.destroy', session: FLARE_SESSION }, 10000); } catch {}
     flareSessions.delete(FLARE_SESSION);
     flareSessions.add(FLARE_SESSION);
     try { await flareRequest({ cmd: 'sessions.create', session: FLARE_SESSION, maxTimeout: 20000 }, 25000); } catch {}
-    const res = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url, maxTimeout: 25000 }, 30000);
-    return res.solution.response;
+    try {
+      const res = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url, maxTimeout: 25000 }, 30000);
+      return res.solution.response;
+    } catch (err2) {
+      console.error(`[flare] request failed after retry: ${err2?.message || err2}`);
+      throw err2;
+    }
   }
 }
 
