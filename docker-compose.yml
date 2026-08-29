@@ -17,6 +17,7 @@ services:
     image: flaresolverr/flaresolverr:latest
     container_name: flaresolverr
     restart: unless-stopped
+    shm_size: '1gb'
     ports:
       - "127.0.0.1:8191:8191"
     environment:
