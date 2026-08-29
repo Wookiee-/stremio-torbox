@@ -12,7 +12,23 @@ A fast Stremio addon that streams movies and TV shows via [TorBox](https://torbo
 
 ---
 
-## Deployment on VPS
+## Quick Start (with torbox.ddns.net)
+
+```bash
+git clone https://github.com/Wookiee-/stremio-torbox.git
+cd stremio-torbox
+
+# 1. Start the addon container
+docker compose up -d --build
+
+# 2. Configure Nginx and SSL certificate
+chmod +x setup-nginx.sh
+sudo ./setup-nginx.sh torbox.ddns.net your-email@example.com
+```
+
+Once set up:
+- Configure page: **https://torbox.ddns.net/configure**
+- Stremio Install URL: **stremio://torbox.ddns.net/manifest.json**
 
 ### Option 1: Docker / Docker Compose (Recommended)
 

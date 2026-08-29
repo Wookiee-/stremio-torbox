@@ -166,7 +166,8 @@ app.enable('trust proxy');
 async function handleResolve(req, res) {
   const { apiKey, hash, fileName } = req.params;
   const decodedFileName = fileName ? decodeURIComponent(fileName) : '';
-  console.log(`[resolve] Resolving ${hash} (${decodedFileName || 'default'})...`);
+  console.log(`[resolve] >>> GET ${req.originalUrl}`);
+  console.log(`[resolve] Resolving ${hash} (${decodedFileName || 'default'}) apiKeyLen=${(apiKey || '').length} proxyProto=${req.protocol} host=${req.headers.host}`);
 
   try {
     const torbox = new TorBoxAPI(apiKey);
@@ -174,7 +175,9 @@ async function handleResolve(req, res) {
 
     if (downloadUrl) {
       console.log(`[resolve] Success -> 302 redirecting to TorBox CDN`);
+      console.log(`[resolve]     Location: ${downloadUrl.substring(0, 160)}...`);
       res.setHeader('Cache-Control', 'max-age=21600, public'); // 6 hours
+      res.setHeader('Access-Control-Allow-Origin', '*');
       return res.redirect(302, downloadUrl);
     } else {
       console.error(`[resolve] Could not resolve download URL for ${hash}`);

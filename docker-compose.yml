@@ -6,8 +6,9 @@ services:
     container_name: stremio-torbox
     restart: unless-stopped
     ports:
-      - "7000:7000"
+      - "127.0.0.1:7000:7000"
     environment:
       - PORT=7000
       - HOST=0.0.0.0
-      - BASE_URL=https://your-domain-or-ip.com
+      - BASE_URL=https://torbox.ddns.net
+
