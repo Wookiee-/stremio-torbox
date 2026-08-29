@@ -5,7 +5,7 @@ A fast Stremio addon that streams movies and TV shows via [TorBox](https://torbo
 ## Features
 
 - ⚡ **Instant Playback** — Cached torrents stream directly from TorBox CDN via 302 redirects
-- 🔍 **Multi-Provider Scraping** — Aggregates torrents from Torrentio's provider set (1337x, KickassTorrents, MagnetDL, NyaaSi, AnimeTosho, AniDex, nekoBT, ...) plus TPB, Knaben, BitSearch, YTS, EZTV and more
+- 🔍 **Multi-Provider Scraping** — Aggregates torrents from TPB, Knaben, BitSearch, YTS, EZTV, and more
 - 🎯 **Deduplication** — Clean, duplicate-free stream lists
 - 🎛️ **Torrentio-Style Setup** — Modern configuration UI with resolution exclusion and direct Stremio installation
 - 🚀 **VPS & Docker Ready** — Built for high-speed continuous Node.js runtime
@@ -118,7 +118,6 @@ The script will:
 | `PORT` | `7000` | Port for the HTTP server |
 | `HOST` | `0.0.0.0` | Listen host interface |
 | `BASE_URL` | `http://127.0.0.1:7000` | Public URL (e.g. `https://torbox.yourdomain.com`) used for stream resolve links |
-| `FLARESOLVERR_URL` | — | Optional FlareSolverr endpoint (e.g. `http://flaresolverr:8191`). Required for the Cloudflare-protected providers (1337x, KickassTorrents, TorrentGalaxy, BT4G) |
 | `TORBOX_API_KEY` | — | Default API key for `/test` endpoints |
 
 ---

@@ -9,7 +9,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 const manifest = {
   id: 'community.torbox',
-  version: '1.1.0',
+  version: '1.0.0',
   name: 'TorBox Scraper',
   description: 'Stream movies and TV shows via TorBox cached torrents',
   logo: 'https://torbox.app/favicon.ico',
@@ -38,7 +38,7 @@ const builder = new addonBuilder(manifest);
 // ─── Stream Handler ──────────────────────────────────────────────
 
 builder.defineStreamHandler(async ({ type, id, config }) => {
-  const apiKey = (config?.torbox_api_key || config?.torbox || '').trim();
+  const apiKey = config?.torbox_api_key || config?.torbox;
   if (!apiKey) {
     console.error('[stream] No TorBox API key provided');
     return { streams: [] };
@@ -284,7 +284,7 @@ document.addEventListener('alpine:init', () => {
       <img src="https://torbox.app/favicon.ico" class="w-14 h-14 mx-auto rounded-xl shadow-lg mb-3" alt="TorBox Logo">
       <div class="flex items-center justify-center gap-2 mb-1">
         <h1 class="text-2xl font-bold tracking-tight text-white">TorBox Scraper</h1>
-        <span class="text-xs font-mono bg-indigo-950/80 text-indigo-400 border border-indigo-800/60 px-2 py-0.5 rounded-full">v${manifest.version}</span>
+        <span class="text-xs font-mono bg-indigo-950/80 text-indigo-400 border border-indigo-800/60 px-2 py-0.5 rounded-full">v1.0.0</span>
       </div>
       <p class="text-xs md:text-sm text-gray-400 max-w-md mx-auto">
         Stream cached torrents directly via TorBox debrid service with instant scraping.

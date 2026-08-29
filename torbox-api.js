@@ -7,7 +7,6 @@ const querystring = require('querystring');
 const { searchAllProviders } = require('./providers');
 
 const TB_BASE = 'https://api.torbox.app/v1';
-const TB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 // ─── Quality tiers ───────────────────────────────────────────────
 
@@ -49,32 +48,22 @@ function sortByQualityThenSeeders(results) {
 
 // ─── HTTP helpers ────────────────────────────────────────────────
 
-async function tbRequest(apiKey, method, path, { params, body } = {}, retriedAuth = false) {
+async function tbRequest(apiKey, method, path, { params, body } = {}) {
   const query = params ? `?${new URLSearchParams(params)}` : '';
   const isJson = body && !(body instanceof URLSearchParams);
-  try {
-    const response = await axios({
-      method,
-      url: `${TB_BASE}${path}${query}`,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'User-Agent': TB_UA,
-        Accept: 'application/json',
-        ...(isJson ? { 'Content-Type': 'application/json' } : {}),
-      },
-      data: isJson ? JSON.stringify(body) : body,
-      timeout: 10000,
-    });
-    const result = response.data;
-    if (!result?.success) throw result;
-    return result.data;
-  } catch (err) {
-    if (!retriedAuth && err?.response?.status === 403 && err?.response?.data?.error === 'AUTH_ERROR') {
-      await sleep(1500);
-      return tbRequest(apiKey, method, path, { params, body }, true);
-    }
-    throw err;
-  }
+  const response = await axios({
+    method,
+    url: `${TB_BASE}${path}${query}`,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      ...(isJson ? { 'Content-Type': 'application/json' } : {}),
+    },
+    data: isJson ? JSON.stringify(body) : body,
+    timeout: 10000,
+  });
+  const result = response.data;
+  if (!result?.success) throw result;
+  return result.data;
 }
 
 function sleep(ms) {
@@ -107,13 +96,8 @@ class TorBoxAPI {
       }
       return result;
     } catch (err) {
-      const status = err?.response?.status || '';
-      const resBody = err?.response?.data;
-      const bodySnippet = typeof resBody === 'string'
-        ? resBody.replace(/\s+/g, ' ').substring(0, 120)
-        : resBody ? JSON.stringify(resBody).substring(0, 120) : '';
       const detail = err?.detail || err?.error || err?.message || '';
-      console.error(`[torbox] checkcached error: ${status} ${bodySnippet || detail}`.trim());
+      console.error(`[torbox] checkcached error: ${typeof detail === 'string' ? detail.substring(0, 200) : JSON.stringify(detail).substring(0, 200)}`);
       return new Map();
     }
   }
