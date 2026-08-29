@@ -166,8 +166,7 @@ app.enable('trust proxy');
 async function handleResolve(req, res) {
   const { apiKey, hash, fileName } = req.params;
   const decodedFileName = fileName ? decodeURIComponent(fileName) : '';
-  console.log(`[resolve] >>> GET ${req.originalUrl}`);
-  console.log(`[resolve] Resolving ${hash} (${decodedFileName || 'default'}) apiKeyLen=${(apiKey || '').length} proxyProto=${req.protocol} host=${req.headers.host}`);
+  console.log(`[resolve] Resolving ${hash} (${decodedFileName || 'default'})...`);
 
   try {
     const torbox = new TorBoxAPI(apiKey);
@@ -175,9 +174,7 @@ async function handleResolve(req, res) {
 
     if (downloadUrl) {
       console.log(`[resolve] Success -> 302 redirecting to TorBox CDN`);
-      console.log(`[resolve]     Location: ${downloadUrl.substring(0, 160)}...`);
       res.setHeader('Cache-Control', 'max-age=21600, public'); // 6 hours
-      res.setHeader('Access-Control-Allow-Origin', '*');
       return res.redirect(302, downloadUrl);
     } else {
       console.error(`[resolve] Could not resolve download URL for ${hash}`);
@@ -392,35 +389,6 @@ app.get('/:configuration/configure', (req, res) => {
 });
 
 app.use(getRouter(addonInterface));
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', addon: manifest.name, version: manifest.version });
-});
-
-// Test endpoints
-app.get('/test/:imdbId', async (req, res) => {
-  const { imdbId } = req.params;
-  const apiKey = req.query.key || process.env.TORBOX_API_KEY;
-  if (!apiKey) return res.status(400).json({ error: 'Missing API key' });
-  const torbox = new TorBoxAPI(apiKey);
-  try {
-    const validation = await torbox.validateKey();
-    if (!validation.valid) return res.status(401).json({ error: 'Invalid API key', detail: validation.error });
-    const results = await torbox.searchAll(imdbId, 'movie');
-    res.json({ success: true, user: validation.user?.username, plan: validation.user?.subscription?.plan, results_count: results.length, results: results.slice(0, 10) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/test/:imdbId/:season/:episode', async (req, res) => {
-  const { imdbId, season, episode } = req.params;
-  const apiKey = req.query.key || process.env.TORBOX_API_KEY;
-  if (!apiKey) return res.status(400).json({ error: 'Missing API key' });
-  const torbox = new TorBoxAPI(apiKey);
-  try {
-    const results = await torbox.searchAll(imdbId, 'series', parseInt(season), parseInt(episode));
-    res.json({ success: true, season: parseInt(season), episode: parseInt(episode), results_count: results.length, results: results.slice(0, 10) });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 // ─── Start / Export ──────────────────────────────────────────────
 

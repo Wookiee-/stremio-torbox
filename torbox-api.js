@@ -104,18 +104,12 @@ class TorBoxAPI {
 
   // ─── Resolve a single torrent to direct stream URL (On-demand when played) ─
   async resolve(infoHash, fileName) {
-    const start = Date.now();
-    console.log(`[torbox] resolve() start hash=${infoHash}, fileName="${(fileName || '').substring(0, 60)}"`);
     try {
       const data = await tbRequest(this.apiKey, 'POST', '/api/torrents/createtorrent', {
         body: new URLSearchParams({ magnet: `magnet:?xt=urn:btih:${infoHash}` }),
       });
-      console.log(`[torbox]   createtorrent ok in ${Date.now() - start}ms torrent_id=${data?.torrent_id} queued_id=${data?.queued_id} detail=${data?.detail || ''}`);
 
-      if (!data?.torrent_id && !data?.queued_id) {
-        console.error(`[torbox]   createtorrent returned no id: ${JSON.stringify(data).substring(0, 200)}`);
-        return null;
-      }
+      if (!data?.torrent_id && !data?.queued_id) return null;
       const torrentId = data.torrent_id || data.queued_id;
 
       let torrents = await tbRequest(this.apiKey, 'GET', '/api/torrents/mylist', {
@@ -123,43 +117,28 @@ class TorBoxAPI {
       });
 
       let torrent = Array.isArray(torrents) ? torrents[0] : torrents;
-      if (!torrent) {
-        console.error(`[torbox]   mylist returned nothing for id=${torrentId} (raw=${JSON.stringify(torrents).substring(0, 200)})`);
-        return null;
-      }
-      console.log(`[torbox]   mylist ok: id=${torrent.id || torrentId} download_present=${torrent.download_present} download_state=${torrent.download_state} files=${(torrent.files || []).length} in ${Date.now() - start}ms`);
+      if (!torrent) return null;
 
       // If not ready, brief poll
       if (!torrent.download_present) {
-        console.log(`[torbox]   not download_present, polling up to 3x...`);
         for (let i = 0; i < 3; i++) {
           await sleep(800);
           const retry = await tbRequest(this.apiKey, 'GET', '/api/torrents/mylist', {
             params: { id: torrentId },
           });
           const rt = Array.isArray(retry) ? retry[0] : retry;
-          console.log(`[torbox]   poll#${i + 1}: download_present=${rt?.download_present} state=${rt?.download_state} files=${(rt?.files || []).length}`);
           if (rt?.download_present) {
             torrent = rt;
             break;
           }
-          if (['error', 'dead'].includes(rt?.download_state)) {
-            console.error(`[torbox]   torrent in ${rt.download_state} state, giving up`);
-            return null;
-          }
+          if (['error', 'dead'].includes(rt?.download_state)) return null;
         }
       }
 
-      const url = this._buildUrl(torrent, torrentId, fileName);
-      if (url) {
-        console.log(`[torbox]   SUCCESS built download URL in ${Date.now() - start}ms: ${url.substring(0, 120)}...`);
-      } else {
-        console.error(`[torbox]   FAILED to build download URL (no video file selected) in ${Date.now() - start}ms`);
-      }
-      return url;
+      return this._buildUrl(torrent, torrentId, fileName);
     } catch (err) {
       const detail = err?.detail || err?.error || err?.message || '';
-      console.error(`[torbox] resolve error (${Date.now() - start}ms): ${typeof detail === 'string' ? detail.substring(0, 300) : JSON.stringify(detail).substring(0, 300)}`);
+      console.error(`[torbox] resolve error: ${typeof detail === 'string' ? detail.substring(0, 200) : JSON.stringify(detail).substring(0, 200)}`);
       return null;
     }
   }
@@ -169,15 +148,11 @@ class TorBoxAPI {
     const VIDEO_EXTS = /\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|m2ts)$/i;
 
     const videos = files.filter(f => VIDEO_EXTS.test(f.short_name ?? f.name ?? ''));
-    if (!files.length) console.error(`[torbox]   _buildUrl: torrent has NO files (state=${torrent?.download_state})`);
-    if (!videos.length) console.error(`[torbox]   _buildUrl: ${files.length} files but none look like video`);
     let target = null;
 
     if (targetFileName) {
-      const fn = targetFileName.toLowerCase();
-      target = videos.find(v => (v.name || '').toLowerCase().includes(fn)) ||
-               files.find(f => (f.name || '').toLowerCase().includes(fn));
-      console.log(`[torbox]   _buildUrl: targetFileName match => ${target ? 'FOUND id=' + target.id : 'none, fallback to largest video'}`);
+      target = videos.find(v => (v.name || '').toLowerCase().includes(targetFileName.toLowerCase())) ||
+               files.find(f => (f.name || '').toLowerCase().includes(targetFileName.toLowerCase()));
     }
 
     if (!target) {
@@ -267,15 +242,6 @@ class TorBoxAPI {
     }
 
     return results;
-  }
-
-  async validateKey() {
-    try {
-      const data = await tbRequest(this.apiKey, 'GET', '/api/user/me');
-      return { valid: true, user: data };
-    } catch (err) {
-      return { valid: false, error: err.message };
-    }
   }
 }
 
