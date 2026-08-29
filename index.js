@@ -38,7 +38,7 @@ const builder = new addonBuilder(manifest);
 // ─── Stream Handler ──────────────────────────────────────────────
 
 builder.defineStreamHandler(async ({ type, id, config }) => {
-  const apiKey = config?.torbox_api_key || config?.torbox;
+  const apiKey = (config?.torbox_api_key || config?.torbox || '').trim();
   if (!apiKey) {
     console.error('[stream] No TorBox API key provided');
     return { streams: [] };
