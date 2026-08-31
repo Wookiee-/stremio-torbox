@@ -611,7 +611,7 @@ async function lookupMeta(imdbId, type) {
 }
 
 const PROVIDERS = {
-  thepiratebay, yts, eztv, knaben, bitsearch, solidtorrents, limetorrents, extto,
+  thepiratebay, yts, eztv, knaben, bitsearch, solidtorrents, limetorrents,
 };
 
 /**
@@ -638,7 +638,7 @@ async function searchAllProviders(imdbId, type, season, episode) {
 
   const PROVIDER_TIMEOUT = 5000;
   const FLARE_TIMEOUT = 45000; // ext.to via FlareSolverr (shell+fragment+HMAC, Hostinger single Chrome)
-  const FLARE_PROVIDERS = new Set(['extto']); // Flare providers sequential via Hostinger single Chrome (rarbg/bt4g/torrentgalaxy/btdig/torlock removed)
+  const FLARE_PROVIDERS = new Set([]); // Flare providers sequential via Hostinger single Chrome (extto/rarbg/bt4g/torrentgalaxy/btdig/torlock removed)
 
   // Phase 1: fast providers in parallel (Torrentio-style, not all 12 at once to avoid Flare overload)
   const fastProviders = Object.entries(PROVIDERS).filter(([k]) => !FLARE_PROVIDERS.has(k));
