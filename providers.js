@@ -434,8 +434,10 @@ async function extto(query, type) {
   }
 
   try {
-    // Shell fetch to get tokens (via Flare session torbox)
-    const shell = await fetchHtml(`https://ext.to/browse/`, { params: { q: query }, flare: true });
+    // Shell fetch to get tokens + cf_clearance cookies (via Flare session torbox)
+    // Flare v2 removed `headers` param, so we get shell via Flare and fragment via direct XHR with cookies
+    const shellRes = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url: buildUrl('https://ext.to/browse/', { q: query }), maxTimeout: 30000 }, 35000);
+    const shell = shellRes?.solution?.response;
     if (typeof shell !== 'string') return [];
     const pageToken = (shell.match(/window\.searchPageToken\s*=\s*['"]([^'"]+)['"]/) || [])[1] || '';
     const csrf = (shell.match(/<meta name="csrf-token" content="([^"]+)"/) || [])[1] || '';
@@ -443,10 +445,36 @@ async function extto(query, type) {
       console.log(`[extto] missing tokens pageToken=${!!pageToken} csrf=${!!csrf} for "${query}"`);
       return [];
     }
+    const cookies = (shellRes?.solution?.cookies || []).map(c => `${c.name}=${c.value}`).join('; ');
 
-    // Fragment fetch via XHR header using same Flare session (inherits cf_clearance)
-    const fragRes = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url: buildUrl('https://ext.to/browse/', { q: query }), headers: { 'X-Requested-With': 'XMLHttpRequest' }, maxTimeout: 30000 }, 35000);
-    const frag = fragRes?.solution?.response;
+    // Fragment via direct XHR with cf_clearance (Flare v2 dropped `headers` support)
+    const frag = await new Promise((resolve, reject) => {
+      const fragUrl = buildUrl('https://ext.to/browse/', { q: query });
+      const parsed = new URL(fragUrl);
+      const lib = parsed.protocol === 'https:' ? https : http;
+      const req = lib.get(fragUrl, {
+        headers: {
+          'User-Agent': UA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': 'https://ext.to/browse/?q=' + encodeURIComponent(query),
+          'Cookie': cookies,
+        },
+        timeout: 8000,
+      }, (res) => {
+        if (res.statusCode >= 400) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+        let data = ''; res.on('data', c => data += c); res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    }).catch(async () => {
+      // Fallback to Flare without headers (may return shell, but try)
+      try {
+        const r = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url: buildUrl('https://ext.to/browse/', { q: query }), maxTimeout: 25000 }, 30000);
+        return r?.solution?.response || '';
+      } catch { return ''; }
+    });
     if (typeof frag !== 'string') return [];
     const $ = cheerio.load(frag);
     const btns = $('.search-magnet-btn');
