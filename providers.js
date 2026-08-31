@@ -534,8 +534,8 @@ async function extto(query, type) {
 
 // ─── 12. RARBG (proxyrarbg.to direct + torrentbay.st Flare fallback, sequential) ─
 async function rarbg(query) {
-  let html = await fetchHtml('https://www.proxyrarbg.to/torrents.php', {
-    params: { search: query, order: 'seeders', by: 'DESC' },
+  let html = await fetchHtml('https://www.proxyrarbg.to/search/', {
+    params: { search: query },
     flare: false,
   }).catch(() => null);
   if (typeof html !== 'string' || !html.includes('magnet:')) {
