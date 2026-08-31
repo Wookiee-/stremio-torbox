@@ -11,4 +11,5 @@ services:
       - PORT=7000
       - HOST=0.0.0.0
       - BASE_URL=https://torbox.ddns.net
+      - FLARESOLVERR_URL=http://srv1942932.hstgr.cloud:32768
 

@@ -99,6 +99,72 @@ async function httpGet(url, { params = {}, timeout = 4000, retries = 0 } = {}) {
   }
 }
 
+// FlareSolverr bypass for Cloudflare-protected providers (optional - external Hostinger box)
+const FLARESOLVERR_URL = (process.env.FLARESOLVERR_URL || '').replace(/\/+$/, '');
+const FLARE_SESSION = 'torbox';
+const flareSessions = new Set();
+
+function buildUrl(url, params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return qs ? `${url}?${qs}` : url;
+}
+
+async function httpPost(url, body, timeout = 30000) {
+  const parsed = new URL(url);
+  const text = await new Promise((resolve, reject) => {
+    const req = (parsed.protocol === 'https:' ? https : http).request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.write(body);
+    req.end();
+  });
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+async function flareRequest(cmd, timeout) {
+  const res = await httpPost(`${FLARESOLVERR_URL}/v1`, JSON.stringify({ ...cmd, maxTimeout: cmd.maxTimeout || 25000 }), timeout);
+  if (res?.status !== 'ok') throw new Error(res?.message || 'flaresolverr error');
+  return res;
+}
+
+async function flareGet(url) {
+  if (!flareSessions.has(FLARE_SESSION)) {
+    flareSessions.add(FLARE_SESSION);
+    try { await flareRequest({ cmd: 'sessions.create', session: FLARE_SESSION, maxTimeout: 15000 }, 20000); } catch {}
+  }
+  try {
+    const res = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url, maxTimeout: 25000 }, 30000);
+    return res.solution.response;
+  } catch (err) {
+    try { await flareRequest({ cmd: 'sessions.destroy', session: FLARE_SESSION }, 10000); } catch {}
+    flareSessions.delete(FLARE_SESSION);
+    flareSessions.add(FLARE_SESSION);
+    try { await flareRequest({ cmd: 'sessions.create', session: FLARE_SESSION, maxTimeout: 20000 }, 25000); } catch {}
+    const res = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url, maxTimeout: 25000 }, 30000);
+    return res.solution.response;
+  }
+}
+
+async function fetchHtml(url, { params = {}, timeout = 4000, flare = false, flareFallback = false } = {}) {
+  const fullUrl = buildUrl(url, params);
+  if (flare && FLARESOLVERR_URL) return flareGet(fullUrl);
+  try {
+    return await httpGet(fullUrl, { timeout });
+  } catch (err) {
+    if (flareFallback && FLARESOLVERR_URL) return flareGet(fullUrl);
+    throw err;
+  }
+}
+
 // ─── 1. The Pirate Bay (JSON API — apibay.org) ───────────────────
 async function thepiratebay(query) {
   const data = await httpGet('https://apibay.org/q.php', { params: { q: query, cat: '0' }, timeout: 4000 });
@@ -213,9 +279,9 @@ async function bitsearch(query) {
   return results.slice(0, 30);
 }
 
-// ─── 6. BT4G (HTML scraper) ──────────────────────────────────────
+// ─── 6. BT4G (HTML scraper — Cloudflare via FlareSolverr, sequential) ─
 async function bt4g(query) {
-  const html = await httpGet(`https://bt4gprx.com/search/${encodeURIComponent(query)}/byseeders/1`, { timeout: 4000 });
+  const html = await fetchHtml(`https://bt4gprx.com/search/${encodeURIComponent(query)}/byseeders/1`, { flare: true });
   if (typeof html !== 'string') return [];
   const $ = cheerio.load(html);
   const results = [];
@@ -289,11 +355,11 @@ async function torlock(query, type) {
   return results;
 }
 
-// ─── 9. TorrentGalaxy (HTML scraper) ─────────────────────────────
+// ─── 9. TorrentGalaxy (HTML scraper — Cloudflare via FlareSolverr, sequential) ─
 async function torrentgalaxy(query) {
-  const html = await httpGet('https://torrentgalaxy.to/torrents.php', {
+  const html = await fetchHtml('https://en.torrentgalaxy-official.is/torrents.php', {
     params: { search: query, nox: 1, sort: 'seeders', order: 'desc' },
-    timeout: 4000,
+    flare: true,
   });
   if (typeof html !== 'string') return [];
   const $ = cheerio.load(html);
@@ -339,28 +405,103 @@ async function limetorrents(query, type) {
   return results;
 }
 
-// ─── 11. EXT.to (HTML scraper) ───────────────────────────────────
+// ─── 11. EXT.to (HTML scraper — Cloudflare via FlareSolverr) ──────
+// Note: ext.to site now loads results via AJAX + HMAC magnet endpoint (/ajax/getSearchMagnet.php).
+// The old /search/... table no longer exists; /browse/?q= returns shell HTML without magnets.
+// This provider now attempts /browse/?q= via Flare and parses fallback; returns [] if no magnets found
+// (full HMAC flow requires sessid/hmac extraction — TODO if needed).
 async function extto(query, type) {
-  const cat = type === 'movie' ? 'movies' : 'series';
-  const html = await httpGet(`https://ext.to/search/${encodeURIComponent(query)}/${cat}/`, { timeout: 4000 });
-  if (typeof html !== 'string') return [];
-  const $ = cheerio.load(html);
-  const results = [];
-  $('table tbody tr').each((_, row) => {
-    const cells = $(row).find('td');
-    if (cells.length < 5) return;
-    const title = cells.eq(1).find('a').first().text().trim();
-    const magnet = $(row).find('a[href^="magnet:"]').first().attr('href') || '';
-    const hash = extractInfoHash(magnet);
-    if (!hash || !title) return;
-    results.push({
-      title, hash,
-      seeders: parseIntSafe(cells.eq(3).text()),
-      size: parseSize(cells.eq(2).text()),
-      source: 'EXT',
+  // EXT.to now requires FlareSolverr + XHR fragment + HMAC magnet POST
+  // Step 1: get shell to extract pageToken + csrf (sessid)
+  // Step 2: XHR fetch fragment to get .search-magnet-btn rows
+  // Step 3: HMAC POST to /ajax/getSearchMagnet.php to resolve magnets
+  if (!FLARESOLVERR_URL) {
+    // Fallback to legacy table (will be empty behind CF)
+    const html = await fetchHtml(`https://ext.to/browse/`, { params: { q: query }, flareFallback: true });
+    if (typeof html !== 'string') return [];
+    const $ = cheerio.load(html);
+    const results = [];
+    $('table tbody tr').each((_, row) => {
+      const cells = $(row).find('td');
+      if (cells.length < 5) return;
+      const title = cells.eq(1).find('a').first().text().trim();
+      const magnet = $(row).find('a[href^="magnet:"]').first().attr('href') || '';
+      const hash = extractInfoHash(magnet);
+      if (!hash || !title) return;
+      results.push({ title, hash, seeders: parseIntSafe(cells.eq(3).text()), size: parseSize(cells.eq(2).text()), source: 'EXT' });
     });
-  });
-  return results;
+    return results;
+  }
+
+  try {
+    // Shell fetch to get tokens (via Flare session torbox)
+    const shell = await fetchHtml(`https://ext.to/browse/`, { params: { q: query }, flare: true });
+    if (typeof shell !== 'string') return [];
+    const pageToken = (shell.match(/window\.searchPageToken\s*=\s*['"]([^'"]+)['"]/) || [])[1] || '';
+    const csrf = (shell.match(/<meta name="csrf-token" content="([^"]+)"/) || [])[1] || '';
+    if (!pageToken || !csrf) {
+      console.log(`[extto] missing tokens pageToken=${!!pageToken} csrf=${!!csrf} for "${query}"`);
+      return [];
+    }
+
+    // Fragment fetch via XHR header using same Flare session (inherits cf_clearance)
+    const fragRes = await flareRequest({ cmd: 'request.get', session: FLARE_SESSION, url: buildUrl('https://ext.to/browse/', { q: query }), headers: { 'X-Requested-With': 'XMLHttpRequest' }, maxTimeout: 30000 }, 35000);
+    const frag = fragRes?.solution?.response;
+    if (typeof frag !== 'string') return [];
+    const $ = cheerio.load(frag);
+    const btns = $('.search-magnet-btn');
+    if (!btns.length) {
+      console.log(`[extto] No magnet buttons in fragment for "${query}"`);
+      return [];
+    }
+
+    const crypto = require('crypto');
+    const ts = Math.floor(Date.now() / 1000);
+    const limit = Math.min(btns.length, 2); // limit to 2 to avoid Flare overload (Hostinger single Chrome, sequential)
+    const results = [];
+    // Sequential HMAC POSTs to avoid overloading single Flare Chrome (Hostinger 1x Chrome)
+    for (let i = 0; i < limit; i++) {
+      const el = btns[i];
+      const $el = $(el);
+      const tid = parseInt($el.attr('data-id'), 10);
+      if (!tid) continue;
+      const $row = $el.closest('tr');
+      const title = $row.find('a.torrent-title-link').first().text().trim() || $el.attr('data-name') || query;
+      const cells = $row.find('td');
+      let size = 0, seeders = 0;
+      if (cells.length >= 6) {
+        size = parseSize(cells.eq(1).text());
+        const seedText = cells.eq(4).text();
+        const m = seedText.match(/(\d[\d,]*)/);
+        seeders = m ? parseIntSafe(m[1]) : 0;
+      } else {
+        const text = $row.text();
+        size = parseSize(text);
+        seeders = parseIntSafe(text.match(/Seeds?\s*([\d,]+)/i)?.[1] || '0');
+      }
+      const hmac = crypto.createHash('sha256').update(`${tid}|${ts}|${pageToken}`).digest('hex');
+      try {
+        const postData = `torrent_id=${tid}&hash=&name=${encodeURIComponent(title)}&timestamp=${ts}&hmac=${hmac}&sessid=${csrf}`;
+        const res = await flareRequest({ cmd: 'request.post', session: FLARE_SESSION, url: 'https://ext.to/ajax/getSearchMagnet.php', postData, maxTimeout: 15000 }, 20000);
+        let magnet = null;
+        try {
+          const body = res?.solution?.response || '';
+          const m = body.match(/<pre>(.*?)<\/pre>/s);
+          const jsonStr = m ? m[1] : body;
+          const data = JSON.parse(jsonStr);
+          magnet = data.url;
+        } catch {}
+        if (!magnet) continue;
+        const hash = extractInfoHash(magnet);
+        if (!hash) continue;
+        results.push({ title, hash: hash.toLowerCase(), size, seeders, source: 'EXT' });
+      } catch { continue; }
+    }
+    return results;
+  } catch (err) {
+    console.log(`[extto] error: ${err.message}`);
+    return [];
+  }
 }
 
 // ─── SolidTorrents (JSON API — redirects to bitsearch.eu backend) ─
@@ -420,8 +561,14 @@ async function searchAllProviders(imdbId, type, season, episode) {
   }
 
   const PROVIDER_TIMEOUT = 5000;
+  const FLARE_TIMEOUT = 45000; // ext.to via FlareSolverr (shell+fragment+HMAC, Hostinger single Chrome)
+  const FLARE_PROVIDERS = new Set(['extto', 'bt4g', 'torrentgalaxy']); // Flare providers sequential via Hostinger single Chrome
 
-  const tasks = Object.entries(PROVIDERS).map(([pName, fn]) => {
+  // Phase 1: fast providers in parallel (Torrentio-style, not all 12 at once to avoid Flare overload)
+  const fastProviders = Object.entries(PROVIDERS).filter(([k]) => !FLARE_PROVIDERS.has(k));
+  const flareProviders = Object.entries(PROVIDERS).filter(([k]) => FLARE_PROVIDERS.has(k));
+
+  const fastTasks = fastProviders.map(([pName, fn]) => {
     return (async () => {
       if (pName === 'yts' && type !== 'movie') return [];
       if (pName === 'eztv' && type !== 'series') return [];
@@ -434,14 +581,21 @@ async function searchAllProviders(imdbId, type, season, episode) {
     })().catch(() => []);
   });
 
-  const allSettled = await Promise.allSettled(tasks);
+  const fastSettled = await Promise.allSettled(fastTasks);
   const allResults = [];
+  for (const s of fastSettled) if (s.status === 'fulfilled' && Array.isArray(s.value)) allResults.push(...s.value);
 
-  for (let i = 0; i < allSettled.length; i++) {
-    const s = allSettled[i];
-    if (s.status === 'fulfilled' && Array.isArray(s.value)) {
-      allResults.push(...s.value);
-    }
+  // Phase 2: Flare providers sequentially (single Chrome, like Torrentio namedQueue concurrency 1)
+  // Only run if we have few results or always (ext.to adds niche 4K). Run sequentially to avoid 25s challenge timeout from parallel Chrome.
+  for (const [pName, fn] of flareProviders) {
+    if (pName === 'yts' && type !== 'movie') continue;
+    if (pName === 'eztv' && type !== 'series') continue;
+    const args = [query, type];
+    try {
+      const timer = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), FLARE_TIMEOUT));
+      const res = await Promise.race([fn(...args), timer]);
+      if (Array.isArray(res)) allResults.push(...res);
+    } catch {}
   }
 
   // Deduplicate by hash, keep highest seeders
