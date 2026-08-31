@@ -532,6 +532,48 @@ async function extto(query, type) {
   }
 }
 
+// ─── 12. RARBG (torrentbay.st mirror — Cloudflare via FlareSolverr, sequential) ─
+async function rarbg(query) {
+  const html = await fetchHtml('https://rarbg.torrentbay.st/torrents.php', {
+    params: { search: query, order: 'seeders', by: 'DESC' },
+    flare: true,
+  });
+  if (typeof html !== 'string') return [];
+  const $ = cheerio.load(html);
+  const results = [];
+  // RARBG tables: rows with magnet links, title in first td, size/seeders in others
+  $('a[href^="magnet:"]').each((_, el) => {
+    const magnet = $(el).attr('href') || '';
+    const hash = extractInfoHash(magnet);
+    if (!hash || results.some(r => r.hash === hash)) return;
+    const $row = $(el).closest('tr');
+    const title = $row.find('a[href*="/torrent/"]').first().text().trim() || $row.find('td').first().text().trim();
+    if (!title) return;
+    const text = $row.text();
+    results.push({
+      title,
+      hash,
+      size: parseSize(text),
+      seeders: parseIntSafe(text.match(/(\d+)\s+seeders/i)?.[1] || $row.find('td').eq(3).text()),
+      source: 'RARBG',
+    });
+  });
+  // Fallback: table rows without direct magnet (hash in href)
+  if (!results.length) {
+    $('table tr').each((_, row) => {
+      const $row = $(row);
+      const title = $row.find('a[href*="/torrent/"]').first().text().trim();
+      const href = $row.find('a[href*="/torrent/"]').first().attr('href') || '';
+      const m = href.match(/([a-fA-F0-9]{40})/i);
+      const hash = m ? m[1].toLowerCase() : null;
+      if (!title || !hash || results.some(r => r.hash === hash)) return;
+      const text = $row.text();
+      results.push({ title, hash, size: parseSize(text), seeders: parseIntSafe(text.match(/(\d+)\s+seeders/i)?.[1] || '0'), source: 'RARBG' });
+    });
+  }
+  return results.slice(0, 30);
+}
+
 // ─── SolidTorrents (JSON API — redirects to bitsearch.eu backend) ─
 async function solidtorrents(query) {
   const data = await httpGet('https://bitsearch.eu/api/v1/search', {
@@ -563,7 +605,7 @@ async function lookupMeta(imdbId, type) {
 }
 
 const PROVIDERS = {
-  thepiratebay, yts, eztv, knaben, bitsearch, solidtorrents, bt4g, btdig, torlock, torrentgalaxy, limetorrents, extto,
+  thepiratebay, yts, eztv, knaben, bitsearch, solidtorrents, bt4g, btdig, torlock, torrentgalaxy, limetorrents, extto, rarbg,
 };
 
 /**
@@ -590,7 +632,7 @@ async function searchAllProviders(imdbId, type, season, episode) {
 
   const PROVIDER_TIMEOUT = 5000;
   const FLARE_TIMEOUT = 45000; // ext.to via FlareSolverr (shell+fragment+HMAC, Hostinger single Chrome)
-  const FLARE_PROVIDERS = new Set(['extto', 'bt4g', 'torrentgalaxy']); // Flare providers sequential via Hostinger single Chrome
+  const FLARE_PROVIDERS = new Set(['extto', 'bt4g', 'torrentgalaxy', 'rarbg']); // Flare providers sequential via Hostinger single Chrome
 
   // Phase 1: fast providers in parallel (Torrentio-style, not all 12 at once to avoid Flare overload)
   const fastProviders = Object.entries(PROVIDERS).filter(([k]) => !FLARE_PROVIDERS.has(k));
